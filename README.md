@@ -18,6 +18,8 @@ Everything runs on-device. Nothing is uploaded.
 >
 > _If you'd rather build it yourself from source, the code is right here under MIT — see [Building from source](#building-from-source) below._
 
+![Timeline window with search results, day picker, scrubber, and zoom controls](docs/screenshots/timeline.jpg)
+
 ---
 
 ## Install
@@ -65,6 +67,12 @@ xattr -d com.apple.quarantine /Applications/ReviewLite.app
   structured minutes: Summary, Key Points, Decisions / Conclusions, Action
   Items, Open Questions. Copy to clipboard, paste into your notes.
 
+![Meetings window with audio player, AI-generated minutes panel, and clickable transcript](docs/screenshots/meetings.png)
+
+<p align="center">
+  <img src="docs/screenshots/menubar.png" width="380" alt="ReviewLite menu bar dropdown">
+</p>
+
 ## Privacy
 
 - All screen frames, audio recordings, and transcripts live in the app's sandbox
@@ -95,6 +103,8 @@ Menu bar icon → Settings:
 - **AI summary** — provider picker + API key field (key stored in the app's
   sandboxed preferences, never transmitted anywhere except to your chosen
   provider when you click Generate).
+
+![Settings window: General, Capture, Quality presets with weekly disk estimate](docs/screenshots/settings.png)
 
 ## Known limits
 
