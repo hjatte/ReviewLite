@@ -1,0 +1,27 @@
+# Xcode
+*.xcodeproj
+*.xcworkspace
+*.xcuserdatad/
+DerivedData/
+build/
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+Package.resolved
+
+# Generated
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+.DS_Store
+
+# Resources we generate from sources
+Resources/AppIcon.iconset/
+
+# Local distribution artifacts
+*.dmg
+dist/
