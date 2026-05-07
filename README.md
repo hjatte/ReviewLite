@@ -1,4 +1,8 @@
-# ReviewLite
+<p align="center">
+  <img src="docs/icon.png" width="180" height="180" alt="ReviewLite icon">
+</p>
+
+<h1 align="center">ReviewLite</h1>
 
 A local-first scrollback for your Mac screen — and an automatic recap of every
 meeting you take. Captures periodic screenshots, OCRs them so you can search what
