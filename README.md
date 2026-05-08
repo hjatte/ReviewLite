@@ -14,7 +14,7 @@ Everything runs on-device. Nothing is uploaded.
 
 > **[Download ReviewLite for €5 →](https://attentiveharry.gumroad.com/l/tsbff)**
 >
-> Apple Silicon · macOS 14 (Sonoma) or later · one-time purchase, no subscription
+> Apple Silicon · macOS 14 (Sonoma) or later · one-time purchase, no subscription · current version **0.1.1**
 >
 > _If you'd rather build it yourself from source, the code is right here under MIT — see [Building from source](#building-from-source) below._
 
