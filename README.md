@@ -24,22 +24,14 @@ Everything runs on-device. Nothing is uploaded.
 
 ## Install
 
-After purchase you'll receive a `.dmg` by email. Open it and drag `ReviewLite.app`
-into `/Applications`. Then:
+After purchase you'll receive a `.dmg` by email. Open it, drag `ReviewLite.app`
+into `/Applications`, then:
 
-1. **First launch only:** right-click `ReviewLite.app` → **Open** → confirm.
-   (The app is signed locally rather than with a paid Apple Developer ID, so
-   macOS asks you to confirm once. Subsequent launches just work.)
+1. Open `ReviewLite.app` normally — the app is signed with an Apple Developer ID
+   and notarized, so macOS opens it without Gatekeeper warnings.
 2. Grant **Screen Recording** and **Microphone** permission when prompted.
 
 That's it. The icon lives in the menu bar.
-
-If your Mac is locked down with strict Gatekeeper rules and step 1 still won't
-open, run this in Terminal once:
-
-```
-xattr -d com.apple.quarantine /Applications/ReviewLite.app
-```
 
 ## What it does
 
