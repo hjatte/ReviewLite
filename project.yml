@@ -34,8 +34,9 @@ settings:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
       GCC_OPTIMIZATION_LEVEL: 0
     Release:
-      # Replace with "Developer ID Application: Your Name (TEAMID)" when shipping.
-      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_IDENTITY: "Developer ID Application: Harry Attenborough (V6S3PJU7G4)"
+      DEVELOPMENT_TEAM: V6S3PJU7G4
+      CODE_SIGN_STYLE: Manual
       SWIFT_OPTIMIZATION_LEVEL: "-O"
       SWIFT_COMPILATION_MODE: wholemodule
       GCC_OPTIMIZATION_LEVEL: s
