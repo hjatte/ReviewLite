@@ -45,8 +45,16 @@ final class ScreenRecorder: ObservableObject {
     private var lastFrameHash: UInt64?
     private var idleStreak: Int = 0
 
-    /// After this many consecutive identical frames, switch to slow polling.
+    /// After this many consecutive near-identical frames, switch to slow polling.
     private static let idleThreshold = 5
+
+    /// How many bits of the 64-bit perceptual hash may differ before two frames are
+    /// considered "different". A bit-for-bit match was too strict — a single moving
+    /// cursor or a ticking clock would flip a couple of bits in the 8×8 hash and
+    /// cause a full pipeline run on every capture. Tolerating a few bits collapses
+    /// those minor changes into the dedupe path while still picking up real
+    /// differences (new window, scroll, switching apps, etc.) reliably.
+    private static let hashTolerance: Int = 4
 
     /// Slow-poll interval used while the screen is unchanged.
     /// 30 s feels about right — long enough that overnight idle costs near-zero, short enough
@@ -204,10 +212,11 @@ final class ScreenRecorder: ObservableObject {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(buffer) else { return }
 
             // Adaptive idle detection: hash the pixel buffer BEFORE the expensive HEIC encode
-            // and DB write. If the screen looks identical to the previous capture, skip the
-            // whole pipeline and let `scheduleNextTick` move us to slow polling.
+            // and DB write. If the screen looks roughly identical to the previous capture
+            // (Hamming distance within tolerance), skip the whole pipeline and let
+            // `scheduleNextTick` move us to slow polling.
             let hash = Self.pixelBufferHash(pixelBuffer)
-            if hash == lastFrameHash {
+            if let prev = lastFrameHash, (prev ^ hash).nonzeroBitCount <= Self.hashTolerance {
                 idleStreak += 1
                 return
             }

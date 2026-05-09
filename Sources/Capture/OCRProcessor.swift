@@ -27,18 +27,28 @@ actor OCRProcessor {
     /// even from a 4K source.
     private static let ocrMaxPixelSize: Int = 1200
 
+    /// Hamming-distance tolerance for the dedupe hash — same logic as ScreenRecorder.
+    /// Without this a moving cursor flips a few bits and we'd re-run Vision needlessly.
+    private static let hashTolerance: Int = 4
+
     func process(frameID: Int64, imageURL: URL) async {
         guard let cgImage = Self.loadDownsampled(at: imageURL, maxPixelSize: Self.ocrMaxPixelSize) else { return }
 
-        // Cheap dedupe: if the screen looks identical to the previous frame, re-use its text.
+        // Cheap dedupe: if the screen looks roughly the same as the previous frame
+        // (Hamming distance within tolerance — tolerates cursor moves / clock ticks /
+        // single-pixel changes), re-use its text instead of re-running Vision.
         let hash = Self.averageHash(cgImage)
-        if hash == lastHash, let cached = lastText, !cached.isEmpty {
+        if let prev = lastHash, (prev ^ hash).nonzeroBitCount <= Self.hashTolerance,
+           let cached = lastText, !cached.isEmpty {
             try? Database.shared.setOCR(frameID: frameID, text: cached)
             return
         }
 
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
+        // .fast is roughly 3-5x cheaper than .accurate on Apple Silicon and produces
+        // near-identical output for body text in screenshots — what we mostly OCR.
+        // The accuracy delta only matters for stylized / very low-contrast text.
+        request.recognitionLevel = .fast
         request.usesLanguageCorrection = false
         if #available(macOS 13.0, *) {
             request.automaticallyDetectsLanguage = true
