@@ -2,6 +2,7 @@ import Foundation
 import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
+import CoreImage
 import AppKit
 import Combine
 
@@ -32,6 +33,28 @@ final class ScreenRecorder: ObservableObject {
     /// quality presets in FrameStore aren't capped by source.
     private let sourceWidth = 2400
 
+    // MARK: - Adaptive capture state
+    //
+    // Idea: when the screen looks identical to the last capture for several frames in a row,
+    // back off the capture rate (skip HEIC encode + DB insert + OCR spawn entirely) until
+    // something changes. When change resumes, snap back to the user's chosen interval.
+    //
+    // The hash is computed on the raw pixel buffer BEFORE the HEIC step, so an idle screen
+    // costs us roughly: one ScreenCaptureKit shot + one 8×8 CIContext render + one UInt64
+    // compare. Negligible.
+    private var lastFrameHash: UInt64?
+    private var idleStreak: Int = 0
+
+    /// After this many consecutive identical frames, switch to slow polling.
+    private static let idleThreshold = 5
+
+    /// Slow-poll interval used while the screen is unchanged.
+    /// 30 s feels about right — long enough that overnight idle costs near-zero, short enough
+    /// that "I came back to the keyboard" is detected before the user notices anything.
+    private static let slowInterval: TimeInterval = 30
+
+    private static let hashContext = CIContext(options: [.useSoftwareRenderer: false])
+
     init(frameInterval: TimeInterval) {
         self.frameInterval = frameInterval
     }
@@ -39,7 +62,7 @@ final class ScreenRecorder: ObservableObject {
     func updateInterval(_ seconds: TimeInterval) {
         frameInterval = max(1, seconds)
         if isRunning {
-            scheduleTimer()
+            scheduleNextTick()
         }
     }
 
@@ -53,8 +76,12 @@ final class ScreenRecorder: ObservableObject {
         self.isRunning = true
         self.lastError = nil
         installScreenChangeObserver()
-        scheduleTimer()
+        // Reset adaptive state on every start — first capture should always be treated as
+        // a "change" so it gets stored.
+        lastFrameHash = nil
+        idleStreak = 0
         await captureOnce()
+        scheduleNextTick()
     }
 
     func stop() async {
@@ -73,7 +100,6 @@ final class ScreenRecorder: ObservableObject {
 
     private func installScreenChangeObserver() {
         guard screenChangeObserver == nil else { return }
-        // Re-fetch the display list when the user plugs/unplugs a monitor or rearranges them.
         screenChangeObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -90,28 +116,29 @@ final class ScreenRecorder: ObservableObject {
             self.displays = content.displays
             self.lastDisplayRefresh = Date()
         } catch {
-            // Keep whatever we had; non-fatal.
             self.lastError = error.localizedDescription
         }
     }
 
-    private func scheduleTimer() {
+    /// Schedules the NEXT capture using adaptive interval. Called once after each capture
+    /// completes (vs a fixed-rate `repeats: true` Timer) so we can vary the cadence.
+    private func scheduleNextTick() {
         timer?.invalidate()
-        let t = Timer(timeInterval: frameInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.captureOnce() }
+        let interval = idleStreak >= Self.idleThreshold ? Self.slowInterval : frameInterval
+        let t = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                await self.captureOnce()
+                if self.isRunning { self.scheduleNextTick() }
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
 
-    /// Picks the `SCDisplay` that contains the user's active context — first preference is the
-    /// frontmost window's centre, fallback is the screen with the mouse pointer, fallback is
-    /// the primary display. This means on a multi-monitor setup we capture whichever screen
-    /// the user is actively working on, not just the laptop's built-in display.
     private func activeDisplay() -> SCDisplay? {
         guard !displays.isEmpty else { return nil }
 
-        // 1. Frontmost window's centre.
         if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
            let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
            let windowDict = info.first(where: { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid }),
@@ -128,15 +155,13 @@ final class ScreenRecorder: ObservableObject {
             }
         }
 
-        // 2. Mouse pointer's screen.
-        let mouseLoc = NSEvent.mouseLocation     // AppKit coords (Y goes up from bottom-left).
+        let mouseLoc = NSEvent.mouseLocation
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLoc) }),
            let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
            let match = displays.first(where: { $0.displayID == displayID }) {
             return match
         }
 
-        // 3. Fallback — the first display.
         return displays.first
     }
 
@@ -169,8 +194,7 @@ final class ScreenRecorder: ObservableObject {
 
         guard let filter = contentFilter, let config = streamConfig else { return }
         do {
-            // Skip if the frontmost app is in the excluded list — avoids capturing the
-            // login window all night, screen-saver frames, etc.
+            // Skip if the frontmost app is in the excluded list.
             let snapshot = windowTracker.snapshot()
             if let bundle = snapshot.bundleID,
                SettingsStore.currentExcludedAppBundleIDs.contains(bundle) {
@@ -178,6 +202,18 @@ final class ScreenRecorder: ObservableObject {
             }
             let buffer = try await SCScreenshotManager.captureSampleBuffer(contentFilter: filter, configuration: config)
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(buffer) else { return }
+
+            // Adaptive idle detection: hash the pixel buffer BEFORE the expensive HEIC encode
+            // and DB write. If the screen looks identical to the previous capture, skip the
+            // whole pipeline and let `scheduleNextTick` move us to slow polling.
+            let hash = Self.pixelBufferHash(pixelBuffer)
+            if hash == lastFrameHash {
+                idleStreak += 1
+                return
+            }
+            idleStreak = 0
+            lastFrameHash = hash
+
             let now = Date()
             let win = snapshot
             let result = try await store.append(pixelBuffer: pixelBuffer, capturedAt: now)
@@ -196,5 +232,44 @@ final class ScreenRecorder: ObservableObject {
         } catch {
             self.lastError = error.localizedDescription
         }
+    }
+
+    /// 64-bit average-hash of an 8×8 grayscale render of the pixel buffer. Cheap perceptual
+    /// fingerprint used to decide "is the screen unchanged since the last capture".
+    private static func pixelBufferHash(_ buffer: CVPixelBuffer) -> UInt64 {
+        let ci = CIImage(cvPixelBuffer: buffer)
+        // Stretch-fit into 8×8 (square) — losing aspect is fine for hashing.
+        let scaleX = 8.0 / ci.extent.width
+        let scaleY = 8.0 / ci.extent.height
+        let scaled = ci.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+
+        var bgra = [UInt8](repeating: 0, count: 8 * 8 * 4)
+        bgra.withUnsafeMutableBytes { ptr in
+            hashContext.render(
+                scaled,
+                toBitmap: ptr.baseAddress!,
+                rowBytes: 8 * 4,
+                bounds: CGRect(x: 0, y: 0, width: 8, height: 8),
+                format: .BGRA8,
+                colorSpace: CGColorSpaceCreateDeviceRGB()
+            )
+        }
+
+        var greys = [UInt8](repeating: 0, count: 64)
+        var total = 0
+        for i in 0..<64 {
+            let b = bgra[i * 4]
+            let g = bgra[i * 4 + 1]
+            let r = bgra[i * 4 + 2]
+            let grey = UInt8((Int(r) + Int(g) + Int(b)) / 3)
+            greys[i] = grey
+            total += Int(grey)
+        }
+        let avg = total / 64
+        var hash: UInt64 = 0
+        for (i, p) in greys.enumerated() where Int(p) > avg {
+            hash |= UInt64(1) << UInt64(i)
+        }
+        return hash
     }
 }
